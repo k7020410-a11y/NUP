@@ -334,12 +334,13 @@ class NupPacker {
         }
         val uuid = uuidDigest.digest().copyOfRange(0, 16)
 
-        // TOC size
-        val tocSize = 48 + (pkgRecords.size * NupFormat.PKG_SIZE) +
+        // TOC size (including zero padding to the format's 16-byte boundary)
+        val tocContentSize = 48 + (pkgRecords.size * NupFormat.PKG_SIZE) +
                 (tree.dirs.size * NupFormat.DIR_SIZE) +
                 (tree.files.size * NupFormat.FILE_SIZE) +
                 (tree.children.size * 4) +
                 tree.poolSize
+        val tocSize = ((tocContentSize + NupFormat.EXTENT_ALIGN - 1) / NupFormat.EXTENT_ALIGN) * NupFormat.EXTENT_ALIGN
 
         val blobOffset = (NupFormat.HEADER_SIZE + tocSize + NupFormat.EXTENT_ALIGN - 1) and
                 (NupFormat.EXTENT_ALIGN - 1).inv()
