@@ -73,10 +73,16 @@ class NupExtractor(private val context: Context) {
                     .replace(Regex("[^A-Za-z0-9._-]"), "_").take(64).ifBlank { "package" }
                 val outputRoot = createFreshOutputDirectory(destination, "${baseName}_extracted")
                 val totalFiles = parsed.second.size
+                val estimatedBytes = parsed.second.fold(0L) { sum, entry ->
+                    if (Long.MAX_VALUE - sum < entry.size) throw NupFormatException("Uncompressed size is too large")
+                    sum + entry.size
+                }
+                onProgress(0, totalFiles, "Estimated extracted data: ${formatBytes(estimatedBytes)}")
                 var completed = 0
                 var extractedBytes = 0L
 
-                parsed.third.forEachIndexed { packageIndex, pkg ->
+                try {
+                    parsed.third.forEachIndexed { packageIndex, pkg ->
                     val packageFolderName = if (parsed.third.size == 1) null else {
                         val kindName = when (pkg.kind) {
                             0 -> "base"
@@ -91,23 +97,27 @@ class NupExtractor(private val context: Context) {
                     }
                     val packageRoot = if (packageFolderName == null) outputRoot
                         else createDirectoryExclusive(outputRoot, packageFolderName)
-                    val activeDirectories = HashSet<Int>()
-                    walkDirectory(
-                        raf = raf,
-                        dirIndex = pkg.rootDir,
-                        parent = packageRoot,
-                        directories = parsed.first,
-                        files = parsed.second,
-                        children = parsed.fourth,
-                        activeDirectories = activeDirectories,
-                        depth = 0,
-                        totalFiles = totalFiles,
-                        onFile = { entry, relativePath ->
-                            completed++
-                            extractedBytes += entry.size
-                            onProgress(completed, totalFiles, relativePath)
-                        }
-                    )
+                        walkDirectory(
+                            raf = raf,
+                            dirIndex = pkg.rootDir,
+                            parent = packageRoot,
+                            directories = parsed.first,
+                            files = parsed.second,
+                            children = parsed.fourth,
+                            activeDirectories = HashSet(),
+                            depth = 0,
+                            totalFiles = totalFiles,
+                            estimatedBytes = estimatedBytes,
+                            onFile = { entry, relativePath ->
+                                completed++
+                                extractedBytes += entry.size
+                                onProgress(completed, totalFiles, relativePath)
+                            }
+                        )
+                    }
+                } catch (error: Throwable) {
+                    deleteDocumentTree(outputRoot)
+                    throw error
                 }
                 return Result(outputRoot.name ?: "${baseName}_extracted", completed, extractedBytes)
             }
@@ -337,6 +347,7 @@ class NupExtractor(private val context: Context) {
         activeDirectories: MutableSet<Int>,
         depth: Int,
         totalFiles: Int,
+        estimatedBytes: Long,
         onFile: (FileEntry, String) -> Unit
     ) {
         if (depth > 512) throw NupFormatException("NUP directory nesting is too deep")
@@ -352,7 +363,7 @@ class NupExtractor(private val context: Context) {
                     validateComponent(childDir.name)
                     val childOutput = createDirectoryExclusive(parent, childDir.name)
                     walkDirectory(raf, nodeId.toInt(), childOutput, directories, files, children,
-                        activeDirectories, depth + 1, totalFiles, onFile)
+                        activeDirectories, depth + 1, totalFiles, estimatedBytes, onFile)
                 } else {
                     val fileIndex = (nodeId - directories.size).toInt()
                     val entry = files.getOrNull(fileIndex) ?: throw NupFormatException("Invalid NUP file node")
@@ -365,7 +376,10 @@ class NupExtractor(private val context: Context) {
                     } catch (e: Throwable) {
                         output.delete()
                         if (isNoSpace(e)) {
-                            throw NupFormatException("The selected destination folder has run out of space. Choose a folder on storage with more free space.")
+                            throw NupFormatException(
+                                "The selected destination could not store the output. This NUP expands to about ${formatBytes(estimatedBytes)}; " +
+                                    "the selected volume or its provider may have less usable space. Choose another destination."
+                            )
                         }
                         throw e
                     }
@@ -412,6 +426,18 @@ class NupExtractor(private val context: Context) {
             suffix++
         }
         return parent.createDirectory(candidate) ?: throw NupFormatException("Cannot create output folder: $candidate")
+    }
+
+    private fun deleteDocumentTree(document: DocumentFile) {
+        if (document.isDirectory) document.listFiles().forEach(::deleteDocumentTree)
+        document.delete()
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024 -> "%.1f KB".format(bytes / 1024.0)
+        bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
+        else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
     }
 
     private fun createDirectoryExclusive(parent: DocumentFile, name: String): DocumentFile {
