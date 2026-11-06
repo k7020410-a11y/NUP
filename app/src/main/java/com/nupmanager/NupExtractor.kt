@@ -377,8 +377,8 @@ class NupExtractor(private val context: Context) {
                         output.delete()
                         if (isNoSpace(e)) {
                             throw NupFormatException(
-                                "The selected destination could not store the output. This NUP expands to about ${formatBytes(estimatedBytes)}; " +
-                                    "the selected volume or its provider may have less usable space. Choose another destination."
+                                "Cannot write extracted data: ENOSPC. Required output is about ${formatBytes(estimatedBytes)} " +
+                                    "(${estimatedBytes} bytes). The selected destination/provider rejected the write; try a local Internal storage folder."
                             )
                         }
                         throw e
@@ -435,9 +435,9 @@ class NupExtractor(private val context: Context) {
 
     private fun formatBytes(bytes: Long): String = when {
         bytes < 1024L -> "$bytes B"
-        bytes < 1024L * 1024 -> "%.1f KB".format(bytes / 1024.0)
-        bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
-        else -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
+        bytes < 1024L * 1024 -> String.format(Locale.US, "%.1f KiB", bytes / 1024.0)
+        bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1f MiB", bytes / (1024.0 * 1024))
+        else -> String.format(Locale.US, "%.2f GiB", bytes / (1024.0 * 1024 * 1024))
     }
 
     private fun createDirectoryExclusive(parent: DocumentFile, name: String): DocumentFile {

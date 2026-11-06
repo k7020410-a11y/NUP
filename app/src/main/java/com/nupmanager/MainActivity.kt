@@ -220,7 +220,7 @@ private fun NupManagerScreen() {
                             } catch (error: Throwable) {
                                 Log.e("NupExtractor", "Extraction failed", error)
                                 status = "Extract failed: ${error.localizedMessage ?: error.message ?: "Unknown error"}"
-                                Toast.makeText(context, "Extract failed: ${error.message}", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Extraction failed. See details on screen.", Toast.LENGTH_LONG).show()
                             } finally {
                                 isWorking = false
                                 progressText = ""
