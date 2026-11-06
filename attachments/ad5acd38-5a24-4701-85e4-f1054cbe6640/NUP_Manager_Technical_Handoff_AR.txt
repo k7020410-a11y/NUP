@@ -1,0 +1,813 @@
+NUP Manager for Android
+ملف تسليم تقني شامل - معلومات المشروع والبيئة والتحليل
+تاريخ إعداد الملخص: 2026-11-03
+
+============================================================
+1. الهدف من المشروع
+============================================================
+
+إنشاء تطبيق Android باسم مبدئي NUP Manager لإدارة ملفات .nup الخاصة بتنسيق NUP.
+التطبيق سيعمل محلياً على جهاز Android، مع واجهة حديثة، ومحرك معالجة مكتوب بـ Kotlin/JVM.
+
+الوظائف المستهدفة:
+- Pack: إنشاء ملف NUP من مجلدات dump مفكوكة وغير مشفرة.
+- Extract: استخراج حزمة كاملة أو مجلد فرعي أو ملفات محددة.
+- Verify: فحص بنية الحاوية، ثم فحص SHA-256 لمحتويات الملفات.
+- Info: عرض معلومات الحاوية والحزم والأحجام والبيانات الوصفية.
+- File Browser: تصفح ExeFS وRomFS وبقية شجرة الملفات.
+- Edit Metadata: تعديل اسم اللعبة والناشر وإصدار العرض والأيقونات والأسماء المترجمة.
+- Updates: استعراض حزم التحديثات وإدارتها واستخراجها. لا نفترض أن التطبيق يدمج التحديثات أو يطبقها على Base حالياً.
+
+مبدأ أساسي:
+المستودع الأصلي /root/nup مرجع للقراءة والتحليل فقط. لا تعدّل ملفاته ولا تنفذ تغييرات داخله.
+أنشئ مشروع Android منفصلاً، مثلاً:
+  /root/nup-manager-android
+
+لا تنفذ أي عملية بناء أو تعديل ملفات أو تثبيت إضافات دون أن تكون المهمة المطلوبة واضحة. لا تحذف ملفات المستخدم أو المستودع الأصلي.
+
+============================================================
+2. بيئة Ubuntu الحالية
+============================================================
+
+النظام:
+- Ubuntu 20.04.6 LTS (Focal Fossa)
+- المعمارية: ARM64 / aarch64
+- Kernel: 6.1.145-android14
+- المستخدم/الموجه الذي ظهر: root@pocket
+
+الأدوات:
+- Java: OpenJDK 17.0.20.1 Temurin
+- Python: 3.8.10
+- Git: 2.25.1
+- Gradle: 8.14.3
+- Kotlin المضمّن ضمن Gradle: 2.0.21
+- kotlinc المستقل: غير مثبت، والأمر kotlinc -version أعاد command not found.
+- curl: 7.68.0
+- unzip: 6.00
+
+مسار Android SDK:
+  /root/android-sdk
+
+Command-line tools:
+  /root/android-sdk/cmdline-tools/latest
+
+متغيرات البيئة التي تم ضبطها في جلسة shell:
+  export ANDROID_HOME=/root/android-sdk
+  export ANDROID_SDK_ROOT=/root/android-sdk
+  export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+
+إصدارات/حزم Android SDK التي ثبتت:
+- platform-tools
+- platforms;android-35
+- build-tools;35.0.0
+
+اختبارات تمت:
+- sdkmanager --version: يعمل، الإصدار 22.0، مع تحذير deprecated غير مانع.
+- aapt2 version: اشتغل، مع تحذير linker غير قاتل.
+- zipalign -h: الملف التنفيذي اشتغل وطبع Usage؛ الخيار -h نفسه غير مدعوم.
+- apksigner version: 0.9.
+- gradle --version: Gradle 8.14.3 يعمل على Java 17 وLinux aarch64.
+- kotlinc -version: غير موجود كأمر مستقل. هذا لا يمنع استخدام Kotlin Gradle Plugin، لأنه يستطيع تنزيل compiler ضمن اعتمادات Gradle.
+
+ملاحظات:
+- لا تفترض أن أدوات Android SDK كلها متوافقة بالكامل مع ARM64 لمجرد تثبيتها؛ اختبر الأداة التي تحتاجها عند استخدامها.
+- لا تثبّت NDK حالياً. لم يظهر احتياج مؤكد له إذا كان المحرك Kotlin/JVM ومكتبة Zstandard توفر ABI مناسباً أو تنفذ فك الضغط على JVM.
+- لا تثبّت Kotlin compiler مستقلاً الآن. مشروع Android يستخدم Kotlin Gradle Plugin، وهو يجلب compiler المناسب.
+- مساحة التخزين كانت في آخر فحص معروف 16 GB متاحة من 222 GB تقريباً (94% مستخدم). يجب إعادة فحص المساحة قبل تنزيل اعتمادات كبيرة أو SDK إضافي.
+- يلزم إعادة التحقق من مساحة التخزين الحالية قبل البناء.
+
+============================================================
+3. مستودع NUP المرجعي
+============================================================
+
+الرابط:
+  https://github.com/a55uka/nup
+
+المسار المحلي:
+  /root/nup
+
+المستودع تم تنزيله عبر:
+  cd ~
+  git clone https://github.com/a55uka/nup.git
+
+ملفات المستودع التي ظهرت:
+  .git/
+  .gitignore
+  README.md
+  SPEC.md
+  tools/nup/pyproject.toml
+  tools/nup/nup/__init__.py
+  tools/nup/nup/access.py
+  tools/nup/nup/cli.py
+  tools/nup/nup/discover.py
+  tools/nup/nup/edit.py
+  tools/nup/nup/format.py
+  tools/nup/nup/meta.py
+  tools/nup/nup/pack.py
+  tools/nup/nup/read.py
+  tools/nup/nup/verify.py
+
+تعريف NUP:
+- تنسيق حاوية clean-room لتخزين dumps غير مشفرة لألعاب Nintendo Switch 1/2.
+- الامتداد .nup.
+- Magic: NUP\x01.
+- يخزن ExeFS وRomFS، ويمكن أن يحتوي Base وUpdates وAddons في حاوية واحدة.
+- يفترض أن المحتوى تم فك تشفيره مسبقاً. NUP ليس أداة فك تشفير ولا يتعامل مع المفاتيح.
+- الإصدار في المواصفات: 1.0-draft.
+
+============================================================
+4. متطلبات Python المرجعي
+============================================================
+
+ملف tools/nup/pyproject.toml يذكر:
+  name = "nup"
+  version = "0.1.0"
+  requires-python = ">=3.10"
+  dependencies = ["zstandard>=0.22"]
+
+بيئة Ubuntu الحالية تحتوي Python 3.8.10 فقط.
+لذلك Python المرجعي غير متوافق مباشرة مع نسخة Python الحالية.
+لا تشغّل pip install للمشروع باستخدام Python 3.8 وتتوقع نجاحه.
+لا تثبّت Python أحدث بشكل عشوائي قبل تحديد طريقة مناسبة لـ Ubuntu 20.04 وARM64.
+يمكن مواصلة استخدام ملفات Python كمرجع لفهم التنسيق والمنطق حتى لو لم نشغّلها.
+
+============================================================
+5. ملخص مواصفات NUP الرسمية SPEC.md
+============================================================
+
+5.1 تخطيط الملف
+- Superblock بطول 0x80 بايت في offset 0.
+- TOC يبدأ عند toc_offset، ويكون بعد الـ header.
+- Blob region يبدأ عند blob_offset، وهو محاذى إلى 16 بايت.
+- الملف ينتهي عند file_size.
+- كل الأعداد little-endian.
+- النصوص UTF-8، والمنتجون يُفضّل أن يصدروا NFC.
+
+5.2 Superblock
+الحقول الأساسية:
+- magic[4] = NUP\x01.
+- header_size: 0x80 على الأقل.
+- header_version: 1.
+- toc_offset = header_size.
+- toc_size.
+- toc_sha256: SHA-256 لمنطقة TOC كاملة.
+- blob_offset: محاذى 16 بايت.
+- file_size: يساوي طول الملف الحقيقي.
+- package_count: واحد على الأقل.
+- flags: صفر في v1، والبتات غير المعروفة ترفض.
+- uuid[16]: مشتق من بيانات الحزم.
+- reserved[32]: أصفار.
+
+قواعد التحقق:
+- التحقق من Magic والإصدار/الحقول.
+- header_size >= 0x80.
+- toc_offset == header_size.
+- toc_size وblob_offset وفق محاذاة 16 بايت حسب المواصفة.
+- blob_offset >= toc_offset + toc_size.
+- file_size يطابق الحجم الفعلي.
+- SHA-256 للـ TOC يطابق toc_sha256.
+- package_count >= 1.
+- الحقول المحجوزة والـ flags يجب أن تتوافق مع الإصدار.
+
+UUID:
+أول 16 بايت من SHA-256 لدمج سجلات الحزم بترتيب TOC:
+title_id (u64 LE) + version (u32 LE) + kind (u8).
+
+5.3 TOC
+يحتوي:
+- magic = TOC\x01.
+- package_count.
+- dir_count.
+- file_count.
+- string_pool_off.
+- string_pool_size.
+- reserved.
+- package records.
+- directory records.
+- file records.
+- children array.
+- string pool.
+
+يجب مطابقة package_count مع Superblock.
+مراجع النصوص عبارة عن offset + length داخل string pool، ولا يلزم null terminator.
+
+5.4 Package record (0x40 bytes)
+الحقول:
+- title_id: u64.
+- root_dir.
+- exefs_dir أو NO_DIR.
+- romfs_dir أو NO_DIR.
+- version: u32.
+- kind: u8.
+- flags: u8.
+- reserved.
+- meta_offset: absolute file offset.
+- meta_size.
+- reserved bytes.
+
+Kinds:
+- 0 = base
+- 1 = update
+- 2 = addon
+- 3 = addon_update (محجوز)
+- 4 = system (محجوز)
+- 5..255 محجوزة، ويجب رفضها في Reader وفق §6.1.
+
+قواعد الحزم:
+- بحد أقصى حزمة base واحدة في الحاوية.
+- إذا كانت الحاوية بلا base، يجب وضع standalone_update flag على كل حزمة update.
+- إذا احتوت الحاوية base، تترك هذه العلامة غير مفعلة.
+- addon يحمل title_id الخاص بالإضافة.
+
+Version:
+- صيغة التخزين غالباً (major << 16) | (minor << 8) | micro.
+- مثال 0x70000 = 7.0.0.
+- مع ذلك، Reader يعامل version كقيمة opaque ولا يفترض تفسيرها.
+- Display version في metadata له أولوية للعرض.
+
+Canonical tree:
+  root/
+    exefs/
+    romfs/
+    data/ (اختياري)
+
+يجب أن تشير exefs_dir وromfs_dir إلى المجلدات المناسبة.
+المستهلك يجب أن يستخدم حقول package لتحديد المجلدات، لا يعتمد فقط على الاسم.
+
+5.5 Directory record (0x18 bytes)
+- name_off
+- name_len
+- first_child
+- child_count
+- reserved
+
+5.6 Children array
+- كل عنصر uint32 node id.
+- إذا id < dir_count فهو directory index.
+- إذا id >= dir_count فهو file index = id - dir_count.
+- أبناء كل مجلد في نطاق متصل [first_child, first_child + child_count).
+- أسماء الأبناء مرتبة bytewise UTF-8 lexicographic.
+- أسماء الأبناء فريدة داخل نفس المجلد، وحساسة لحالة الأحرف.
+- child_slot_count هو مجموع child_count لكل المجلدات.
+
+5.7 File record (0x50 bytes)
+- name_off, name_len.
+- size: الحجم غير المضغوط.
+- extent_offset: موقع البيانات داخل الملف.
+- extent_size: الحجم المخزن.
+- sha256: hash للمحتوى بعد فك الضغط.
+- codec.
+- codec_flags.
+- reserved fields.
+
+Zero-length files:
+- extent_size = 0.
+- codec = raw (0).
+- extent_offset = 0.
+
+5.8 Codecs
+- 0 = raw.
+- 1 = Zstandard frame واحد يحتوي الملف كاملاً، ويجب أن يحمل إطار Zstd الحجم الأصلي.
+- 2 = LZ4 محجوز لـ v2.
+- 3 = zstd-chunked محجوز لـ v2.
+- يجب رفض codec غير معروف.
+- Reader عام يفضّل أن يدعم raw وzstd.
+- المنتج يستخدم Zstd level 3 افتراضياً، وقد يستخدم أعلى.
+- إذا كان الضغط لا يقلل الحجم (compressed >= original) أو فشل، يستخدم raw.
+
+5.9 Dedup
+- الملفات التي لها SHA-256 متساوٍ يُفترض أن تشارك extent واحداً عند الإنتاج.
+- لا يجوز مشاركة extent بين ملفات مختلفة في SHA أو الحجم أو codec.
+- Reader لا يفترض أن كل ملفات متطابقة تستخدم extent مشتركاً.
+- قد تكون لها extents منفصلة ومحتوى متطابق.
+
+5.10 Metadata TLV
+كل سجل:
+- type u16.
+- reserved u16.
+- size u32.
+- payload[size].
+- لا توجد padding بين السجلات.
+- Reader يتجاهل الأنواع غير المعروفة.
+
+الأنواع:
+- 0x0001 NPDM.
+- 0x0002 NACP.
+- 0x0003 Icon.
+- 0x0004 Display version.
+- 0x0005 Title name.
+- 0x0006 Publisher.
+- 0x0007 Build ID (32 bytes).
+- 0x0008 Source dump name.
+- 0x0009 Localized titles.
+- 0x000A Localized icons.
+- 0x0100..0x7FFF محجوز للمواصفات المستقبلية.
+- 0x8000..0xFFFF خاص بأدوات/جهات vendor.
+
+Localized records:
+- lang_len u8.
+- lang bytes (BCP-47 lowercase).
+- data_len u32.
+- data bytes.
+- اللغة لا يجوز أن تكون فارغة.
+- التكرار في tags غير صالح.
+- 0x0009 للأسماء، و0x000A للأيقونات.
+- اختيار اللغة: تطابق دقيق، ثم fallbacks، ثم default title/icon.
+- بيانات التطبيق العامة توضع في base package، أو أول package إذا لا يوجد base.
+
+NPDM:
+- يجب أن يكتب المنتج TLV عندما يوجد main.npdm في ExeFS.
+- إذا اختلف NPDM TLV عن الشجرة، الشجرة هي مرجع المحتوى وTLV مرجع metadata.
+
+5.11 Blob region
+- يبدأ عند blob_offset.
+- extents متتابعة، وكل extent يبدأ عند absolute offset محاذى إلى 16.
+- alignment gaps أصفار padding.
+- extent bytes بطول extent_size تماماً.
+
+5.12 Conformance
+Reader يجب أن:
+- يتحقق من Superblock.
+- يتحقق من TOC SHA-256 قبل الوثوق بقيم TOC.
+- يفحص كل offset/size ضد file_size ويرفض التداخل بين المناطق.
+- يعامل version/title_id/NPDM/NACP كبيانات opaque.
+- يرفض codecs غير المعروفة.
+- يرفض kind >= 5.
+- يرفض flags غير المعروفة.
+- لا ينفذ أسماء الملفات ولا يثق بها كمسارات.
+
+Producer يجب أن:
+- يصفّر الحقول المحجوزة.
+- يحاذي extents إلى 16.
+- يرتب children.
+- يحسب SHA-256 للمحتوى غير المضغوط.
+- يبني layout وTOC hash بشكل صحيح.
+- يستبعد artifacts مثل .listing افتراضياً.
+
+Reserved artifact:
+- .listing مستبعد افتراضياً.
+- الاحتفاظ به opt-in غير معتمد بعد في v1.
+
+============================================================
+6. الملفات المرجعية التي تمت مراجعتها
+============================================================
+
+6.1 format.py
+ملاحظات مستخلصة:
+- MAGIC = b"NUP\\x01".
+- TOC_MAGIC = b"TOC\\x01".
+- HEADER_SIZE = 0x80 = 128.
+- PKG_SIZE = 0x40 = 64.
+- DIR_SIZE = 0x18 = 24.
+- FILE_SIZE = 0x50 = 80.
+- EXTENT_ALIGN = 16.
+- TOC header struct size 48.
+- TLV header 8.
+- CODEC_RAW = 0.
+- CODEC_ZSTD = 1.
+- Package kinds: base/update/addon/addon_update/system.
+- PKG_FLAG_STANDALONE_UPDATE = 0x01.
+- structs little-endian.
+- يوجد parsing للـ superblock/package وبيانات التنسيق.
+
+6.2 read.py
+الوظيفة:
+- NupReader يفتح الملف ويستخدم mmap للقراءة.
+- يقرأ Superblock ثم يتحقق من حجم الملف.
+- يتحقق من موضع TOC وBlob.
+- يحسب SHA-256 للـ TOC قبل parsing.
+- يحلل packages/directories/files/children/string pool.
+- يرفض codecs غير المدعومة وcodec_flags غير صفرية.
+- يتحقق من حدود extents ومراجع المجلدات والملفات.
+- يتحقق من قاعدة update بدون base إلا إذا standalone flag موجود.
+- read_file يقرأ raw أو يفك zstd مع max_output_size=size.
+- يتحقق من طول البيانات بعد القراءة.
+ملاحظات/نواقص:
+- read_file لا يحسب SHA-256 لمحتوى الملف؛ Deep Verify يقوم بذلك.
+- إغلاق mmap والملف عند فشل تهيئة __init__ يحتاج معالجة أفضل.
+- close() كما ظهر يغلق file handle، ولا يظهر إغلاق صريح للـ mmap.
+- التحقق من جميع الحقول المحجوزة وsuperblock flags وpackage kind يحتاج مطابقة دقيقة للمواصفة.
+- فحص التداخل بين metadata والـ TOC والـ blobs غير مثبت بالكامل من الكود المعروض.
+- فحص الحسابات يجب أن يكون overflow-safe في Kotlin، خصوصاً عند تحويل u64 إلى Long.
+- قراءة zstd تحتاج حماية من أحجام decompressed غير المعقولة وموارد الجهاز.
+
+6.3 access.py
+الوظائف:
+- find_package: البحث عن حزمة بحسب kind/title_id/version.
+- iter_children: جلب أبناء مجلد.
+- find_child: binary search عن اسم طفل، يعتمد على ترتيب bytewise.
+- meta_records: قراءة TLV records من metadata.
+- localized_titles: قراءة الأسماء المترجمة.
+- localized_icons: قراءة الأيقونات المترجمة.
+- app_meta: جمع metadata records.
+- build_id: قراءة Build ID والتحقق من أن طوله 32 بايت.
+- resolve_path: الوصول إلى مسار نسبي داخل package tree.
+- extract_tree: استخراج subtree إلى مسار محلي.
+
+ملاحظات:
+- extract_tree يستخدم أسماء العقد في مسار النظام مباشرة؛ تطبيق Android يجب أن يمنع path traversal مثل ../ والمسارات المطلقة وأسماء المسارات غير الآمنة.
+- extract_tree يحمل الملف كاملاً في الذاكرة بواسطة read_file قبل كتابته؛ يجب استبداله بعملية streaming.
+- find_child يعتمد على ترتيب children حسب المواصفة.
+- _localized يدمج السجلات المتكررة update semantics؛ بينما meta.py parse_block يحتفظ بأول سجل لنوع TLV. يجب توحيد سياسة duplicate TLV واللغات.
+- لا تنفذ أسماء الملفات أو تعاملها كمسارات موثوقة.
+
+6.4 verify.py
+الوظيفة:
+- verify(path, deep=False) يرجع success وقائمة مشاكل.
+- يفحص بنية الحاوية.
+- يتحقق من أن TOC عند HEADER_SIZE (حسب الكود المعروض).
+- يفحص file_size/blob_offset.
+- يتحقق من child slot ranges.
+- يتحقق من عدم تداخل نطاقات الأبناء.
+- يتحقق من ترتيب وفريدة أسماء الأطفال.
+- يجتاز الشجرة من package roots ويبحث عن cycle/orphan.
+- Deep Verify يقرأ كل ملف ويحسب SHA-256 ويقارنه بالقيمة المخزنة.
+- يتحقق أن raw extent_size يساوي الحجم غير المضغوط.
+- يتحقق من أن الملفات التي تشترك في extent tuple لها SHA نفسها.
+ملاحظات:
+- Deep Verify الحالي يقرأ الملف كاملاً في الذاكرة؛ الأفضل streaming hash وفك ضغط متدفق.
+- close ليس مضموناً عبر finally لكل الاستثناءات في النسخة المعروضة.
+- كشف cycle يحتاج اختبارات مستقلة للتأكد من تغطيته لكل الحالات.
+
+6.5 meta.py
+الوظيفة:
+- تحليل وتسلسل TLV metadata.
+- دمج/تعديل الاسم والناشر وإصدار العرض والأيقونة والأسماء والأيقونات المترجمة.
+- يحتفظ بالسجلات غير المستهدفة.
+- يدعم حذف لغة من localized metadata.
+- meta_block يجمع NPDM/Build ID/Source dump/app extras.
+ملاحظات:
+- parse_block يحتفظ بأول ظهور لنوع TLV.
+- لا يظهر رفض صريح لذيل أقل من 8 bytes؛ قد ينتهي parsing بصمت.
+- decode_localized يحتاج فحوص حدود إضافية قبل قراءة lang_len/lang/data_len.
+- UTF-8 قد يعالج في بعض مواضع CLI باستبدال الأحرف الخاطئة بدلاً من الرفض.
+- قراءة الأيقونة كاملة للذاكرة تحتاج limits وفحص نوع الصورة وأبعادها.
+- بعض أخطاء اللغة تستخدم SystemExit، وهذا غير مناسب كواجهة أخطاء لمحرك Android.
+
+6.6 discover.py
+الوظيفة:
+يتعرف على layouts:
+1. bundle يحتوي base/ وupdates/ وdlc/.
+2. update-only يحتوي updates/ وDLC اختياري.
+3. bare content directory يحتوي exefs/ أو romfs/.
+كما:
+- يستخرج Program ID من NPDM (ACI0).
+- يقرأ Build ID من exefs/main عند NSO0/NRO0.
+- يجمع updates من مجلدات مرقمة.
+- يجمع DLC من dlc/<title id>/<index>/content.
+- يتجاهل .listing افتراضياً.
+- يبني شجرة directory/file مع ترتيب أسماء deterministic.
+- لا يتبع symlink directories.
+ملاحظات:
+- symlink لملف لا يظهر أنه مرفوض صراحة؛ Android يجب أن يرفض الروابط/المسارات غير الآمنة.
+- يجب التحقق من جميع ملفات ومجلدات الإدخال أثناء pack.
+- حماية من تغيّر الملف أثناء القراءة أو من صلاحيات SAF.
+
+6.7 pack.py
+الوظيفة:
+- يحدد مجلدات ExeFS/RomFS.
+- ينشئ UUID مشتقاً من package identities.
+- يقرأ الملفات ويحسب SHA-256.
+- يطبق dedup حسب hash.
+- يضغط بـ Zstd إذا كان الناتج أصغر، وإلا raw.
+- يراعي محاذاة 16 بايت.
+- يبني TOC والـ metadata.
+- يكتب Superblock وTOC hash.
+ملاحظات:
+- النسخة المعروضة تقرأ كل ملف كاملاً عبر fh.read()؛ لا تناسب ملفات ضخمة على هاتف.
+- تطبيق Android يجب أن ينفذ streaming pack مع hash/compress وdedup دون تحميل كامل الملف إلى RAM.
+- يجب تحديد سياسة عند تغيّر مصدر الملف أثناء عملية Pack.
+
+6.8 edit.py
+الوظيفة:
+- تعديل Metadata فقط.
+- لا يعدل محتويات ExeFS/RomFS ولا يدمج التحديثات.
+- ينسخ الجزء السابق لمنطقة metadata إلى ملف مؤقت، ثم يكتب metadata الجديدة ويحدّث TOC hash وSuperblock.
+- يحافظ على UUID كما هو.
+- يتحقق من الملف المؤقت قبل الاستبدال.
+ملاحظات:
+- cleanup للملف المؤقت عند الفشل يحتاج تأكيد.
+- NupReader الخاص بالملف المؤقت يجب إغلاقه بشكل مضمون.
+- التحقق النهائي structural وليس deep.
+- Android SAF يحتاج كتابة ملف مؤقت/مجاور ثم التحقق والنسخ/الاستبدال حسب دعم DocumentProvider.
+- يجب توفير backup أو خيار حفظ نسخة جديدة بدلاً من overwrite المباشر.
+
+6.9 cli.py
+الأوامر:
+- pack
+- info
+- list
+- extract
+- verify
+- edit
+
+خيارات Pack التي ظهرت:
+- source/output
+- level
+- title-id
+- display-version
+- publisher
+- name
+- lang-name
+- icon
+- lang-icon
+- keep-listings
+- quiet
+
+Info يعرض:
+- version/size/UUID/TOC/blob offsets
+- packages/dirs/files
+- metadata name/publisher/localized titles/build ID
+- tree اختياري
+
+Extract يدعم:
+- package kind/index
+- subtree path اختياري
+
+Verify:
+- default deep
+- --fast لتخطي SHA لكل ملف
+- max-problems
+
+Edit:
+- metadata flags
+
+ملاحظات:
+- CLI يمسك F.NupError؛ بعض الاستثناءات الأخرى قد تتسرب.
+- لا يوجد أمر مستقل واضح لتطبيق أو دمج Updates.
+
+============================================================
+7. اختلافات SPEC مقابل التنفيذ المرجعي المرصود
+============================================================
+
+هذه مقارنة أولية مبنية فقط على أجزاء الكود التي تمت مراجعتها، وليست تدقيقاً نهائياً لكل سطر:
+
+- SPEC تقول toc_offset == header_size. read.py المعروض يتحقق فقط أن toc_offset لا يقل عن HEADER_SIZE، وverify.py يتحقق أن toc_offset == HEADER_SIZE. يلزم توحيد التحقق.
+- SPEC تطلب محاذاة toc_size إلى 16. read.py المعروض يحتوي شرطاً `toc_size % 1` وهذا الشرط لا يفحص محاذاة 16 (وبالممارسة يكون دائماً صفراً لأي عدد صحيح). يجب إصلاحه.
+- SPEC تطلب رفض kind >= 5. لم يظهر تحقق صريح في read.py المعروض.
+- SPEC تطلب رفض superblock flags غير المعروفة. لم يظهر تحقق صريح في read.py المعروض.
+- SPEC تطلب التحقق من reserved fields. بعض حقول parsing تم تجاهلها في read.py المعروض؛ يلزم تدقيق format.py والتحقق من كل reserved field.
+- SPEC تطلب رفض تداخل المناطق. فحوص read.py المعروضة لا تثبت رفض كل التداخلات بين TOC/blob/extents/metadata.
+- SPEC تقول reader يجب أن يرفض unknown codecs/kinds/flags.
+- SPEC تقول لا يثق reader بأسماء الملفات كمسارات؛ extract_tree في المرجع يكتب الأسماء مباشرة، ولذلك يجب أن يكون Android أكثر صرامة.
+- SPEC تقول localized duplicate tags invalid؛ يجب رفضها لا مجرد استبدالها بصمت.
+- مواصفات الإصدار draft، ولذلك ينبغي أن تكون سياسة التطبيق واضحة بشأن رفض الحقول غير المطابقة.
+
+============================================================
+8. سياسة الأمان والأداء المقترحة لمحرك Android
+============================================================
+
+أمان:
+- لا تنفذ أي محتوى من الحاوية.
+- لا تتعامل مع أسماء الملفات كمسارات موثوقة.
+- منع ../ والمسارات المطلقة والفواصل/التركيبات غير الآمنة.
+- تحقق من حدود كل offset/size قبل القراءة.
+- استخدم عمليات حساب آمنة مع unsigned fields.
+- ارفض unknown codec/kind/flags/reserved values غير الصفرية.
+- افحص metadata ranges وتداخلها مع بقية مناطق الملف.
+- حدود صريحة لأحجام metadata والأيقونات وعدد الملفات/المجلدات وأحجام فك الضغط.
+- حماية من Zstd decompression bombs عبر الحجم المتوقع وحدود الموارد.
+- لا تستبدل ملف المستخدم الأصلي قبل اكتمال الكتابة والتحقق.
+- استخدم temporary output + validation + optional backup.
+- SAF: لا تفترض أن كل DocumentProvider يدعم seek أو rename أو atomic replace.
+- تعامل مع cancellation والأخطاء وdisk-full بشكل آمن.
+
+أداء:
+- Streaming pack: قراءة chunks، حساب SHA-256 تدريجياً، ضغط متدفق، كتابة extent.
+- Streaming extract: فك ضغط متدفق إلى output stream.
+- Streaming deep verify: فك الضغط/قراءة chunks وحساب SHA دون تحميل الملف كله.
+- mmap قد يكون مناسباً للملفات العادية، لكن Android SAF قد يوفر InputStream/ParcelFileDescriptor بدلاً من مسار filesystem.
+- حافظ على ذاكرة محدودة وثابتة قدر الإمكان.
+- استخدم progress callbacks وcancellation.
+- لا تنفذ عمليات الملفات الثقيلة على UI thread.
+- استخدم coroutine/dispatcher IO أو Executor مناسب.
+- dedup يحتاج تخزين hash/metadata فقط قدر الإمكان، لا محتوى الملفات كلها.
+
+============================================================
+9. المعمارية المقترحة
+============================================================
+
+مشروع مستقل:
+  /root/nup-manager-android
+
+تقنيات مقترحة:
+- Kotlin/JVM
+- Android Gradle Plugin متوافق مع Gradle 8.14.3 وSDK الحالي.
+- Jetpack Compose للواجهة.
+- Android Storage Access Framework لاختيار ملفات ومجلدات.
+- Java 17.
+- مكتبة Zstandard JVM مناسبة لـ Android/ARM64 بعد التحقق من ABI والتوافق.
+- لا حاجة حالياً إلى NDK إلا إذا فرضت مكتبة أو ميزة لاحقاً ذلك.
+
+وحدات منطقية:
+- NupReader: فتح/تحليل/قراءة الحاوية.
+- NupWriter: بناء حاوية.
+- NupVerifier: structural وdeep verification.
+- NupExtractor: استخراج آمن ومتدفق.
+- NupMetadata: قراءة/تعديل TLV.
+- NupBrowser: traversal وpath resolution.
+- NupPackageManager: إدارة base/update/addon.
+- StorageAdapter: طبقة تعزل filesystem عن SAF.
+- UI: Compose screens.
+
+اقتراح هيكل ملفات:
+  app/
+    src/main/java/.../
+      data/
+      domain/
+      engine/
+        format/
+        reader/
+        writer/
+        verify/
+        extract/
+        metadata/
+        browser/
+      storage/
+      ui/
+        home/
+        pack/
+        extract/
+        verify/
+        info/
+        browser/
+        metadata/
+        updates/
+
+لا يلزم اعتماد هذا الهيكل حرفياً؛ يمكن تبسيطه حسب التنفيذ.
+
+============================================================
+10. هل نحتاج تثبيت Kotlin أو أدوات إضافية في الطرفية؟
+============================================================
+
+الوضع الحالي:
+- Gradle 8.14.3 مثبت.
+- Java 17 مثبت.
+- Android SDK Platform 35 وBuild Tools 35.0.0 مثبتة.
+- Kotlin compiler المستقل غير مثبت.
+
+الإجابة:
+لا تحتاج تثبيت kotlinc بشكل مستقل الآن.
+عند إنشاء مشروع Gradle مع Kotlin Gradle Plugin، Gradle ينزل compiler والاعتمادات المطلوبة تلقائياً من مستودعات Maven/Google عند أول Sync/Build، إذا كان الإنترنت متاحاً.
+لكن هذا يعني أن بعض الملفات/المكتبات ستُنزّل في الطرفية تلقائياً أثناء البناء.
+
+قد يحتاج المشروع إلى تنزيل:
+- Android Gradle Plugin إذا لم يكن موجوداً في cache.
+- Kotlin Gradle Plugin/compiler.
+- Jetpack Compose dependencies.
+- AndroidX dependencies.
+- مكتبة Zstandard.
+- Gradle wrapper distribution إذا لم يوجد wrapper في المشروع.
+
+لا حاجة لتنزيل NDK الآن.
+لا حاجة إلى تثبيت Python 3.10+ إذا كان التطوير كله Kotlin، إلا إذا قرر الفريق تشغيل reference Python tests.
+لا حاجة إلى تثبيت kotlinc يدوياً.
+يجب التحقق من أن Gradle repositories قابلة للوصول من الشبكة وأن المساحة تكفي.
+
+أول بناء قد يأخذ وقتاً بسبب تنزيل الاعتمادات. بعد التخزين المؤقت تكون عمليات البناء اللاحقة أسرع غالباً.
+مهم: بناء APK محلياً على ARM64 يجب اختباره؛ بعض أدوات Android أو مكتبات Gradle قد تحتوي مكونات native غير متوافقة، فلا نفترض النجاح قبل الاختبار.
+
+أمر بناء debug المتوقع بعد إنشاء المشروع وGradle wrapper:
+  ./gradlew assembleDebug
+
+وقد يستخدم:
+  gradle assembleDebug
+لكن الأفضل تضمين Gradle Wrapper في المشروع وتثبيت نسخة wrapper معتمدة، كي يكون البناء قابلاً للتكرار.
+
+المسار المتوقع للـ APK:
+  app/build/outputs/apk/debug/app-debug.apk
+يجب التأكد من وجود الملف فعلياً قبل مشاركة رابط أو القول إن البناء نجح.
+
+============================================================
+11. دور وكيل البرمجة (الجني)
+============================================================
+
+المستخدم أكد أن وكيل البرمجة لديه صلاحية الوصول إلى ملفات Ubuntu والطرفية، ويستطيع رؤية الأدوات التي ثبتت سابقاً.
+يمكن أن يتولى:
+- إنشاء المشروع في مجلد منفصل.
+- كتابة ملفات Kotlin وCompose.
+- إعداد Gradle وManifest.
+- تنزيل اعتمادات المشروع عند الحاجة.
+- تشغيل الاختبارات والبناء.
+- قراءة أخطاء البناء وإصلاحها.
+
+تعليمات مهمة للوكيل:
+1. افحص البيئة الحالية أولاً ولا تعِد تثبيت الأدوات الموجودة.
+2. لا تعدّل /root/nup.
+3. لا تثبّت NDK أو Python جديداً دون سبب تقني واضح وموافقة.
+4. افحص المساحة قبل تنزيل اعتمادات كبيرة.
+5. لا تدّع نجاح البناء قبل التحقق من APK فعلياً.
+6. لا تكتب محرك NUP كامل دفعة واحدة؛ نفذ على مراحل مع اختبارات.
+7. لا تنفذ merge/apply updates على أنها ميزة موجودة في NUP؛ ليست ضمن reference CLI.
+8. استخدم streaming للملفات الكبيرة.
+9. اختبر Reader على عينات صحيحة وفاسدة قبل اعتماد Pack/Extract.
+10. احتفظ بسجل لما تم إنجازه والملفات التي تغيرت.
+
+============================================================
+12. خطة التنفيذ المقترحة
+============================================================
+
+المرحلة 1: إنشاء مشروع Android مستقل.
+- إعداد Gradle/AGP/Kotlin/Compose.
+- شاشة أولية باسم NUP Manager.
+- بناء APK debug فارغ/أولي للتأكد من toolchain.
+
+المرحلة 2: Format primitives.
+- تعريف structs/offsets/constants.
+- unsigned little-endian parsing.
+- safe bounds arithmetic.
+- اختبارات unit للـ Superblock وTOC headers.
+
+المرحلة 3: Reader.
+- Superblock validation.
+- TOC hash.
+- parse packages/dirs/files/string pool.
+- bounds/overlap/reserved validation.
+- raw reading ثم Zstd.
+
+المرحلة 4: Info + File Browser.
+- عرض package list.
+- عرض metadata.
+- التنقل داخل الشجرة.
+- عرض الأحجام وcodec.
+
+المرحلة 5: Verify.
+- Fast structural verification.
+- Deep streaming SHA-256 verification.
+
+المرحلة 6: Extract.
+- استخراج package أو subtree.
+- SAF output.
+- منع path traversal.
+- progress/cancellation.
+
+المرحلة 7: Metadata edit.
+- قراءة/تعديل TLV.
+- حفظ نسخة مؤقتة.
+- validation قبل اعتماد الملف.
+- backup أو Save As.
+
+المرحلة 8: Pack.
+- اكتشاف input layouts.
+- streaming SHA/Zstd.
+- dedup.
+- TOC/UUID/Superblock.
+- اختبارات round-trip.
+
+المرحلة 9: Updates management.
+- عرض Base وUpdate وDLC.
+- استعراض/extract لكل package.
+- لا تنفذ overlay/merge إلا كميزة منفصلة ومختبرة مع توثيق واضح.
+
+============================================================
+13. ما لم يتم إثباته بعد
+============================================================
+
+- لم يتم بعد إنشاء مشروع Android.
+- لم يتم بناء APK لهذا التطبيق.
+- لم يتم تثبيت NDK.
+- لم يتم اختبار Zstandard JVM على Android ARM64.
+- لم يتم التحقق من دعم كل أدوات SDK على ARM64 في كل الحالات.
+- لم يتم تشغيل Python reference implementation بسبب Python 3.8 مقابل شرط >=3.10.
+- لم يتم إثبات أن NUP reference implementation يطبق كل متطلبات SPEC.
+- لم يتم اختبار ملفات NUP حقيقية أو إنشاء test corpus في هذه المرحلة.
+- لم يتم تنفيذ update overlay/merge.
+- لم يتم تنفيذ تكامل مباشر مع Eden أو Ryujinx.
+- لا توجد ضمانات حالياً بشأن سرعة Pack/Extract قبل benchmark على الجهاز.
+
+============================================================
+14. أوامر تحقق مفيدة
+============================================================
+
+فحص النظام:
+  uname -a
+  python3 --version
+  java -version
+  gradle --version
+  git --version
+
+فحص SDK:
+  echo "$ANDROID_HOME"
+  sdkmanager --version
+  ls -la /root/android-sdk/platforms
+  ls -la /root/android-sdk/build-tools
+
+فحص المساحة:
+  df -h /root
+
+فحص المستودع المرجعي:
+  cd /root/nup
+  git status --short
+  find tools/nup/nup -maxdepth 1 -type f -print
+
+بناء المشروع بعد إنشائه:
+  cd /root/nup-manager-android
+  ./gradlew assembleDebug
+
+============================================================
+نهاية ملف التسليم
+============================================================
+
+هذا الملف يلخص المعلومات التي ظهرت في المحادثة ومراجعة أجزاء المستودع والمواصفات.
+هو ليس تدقيقاً رسمياً كاملاً لكل سطر في المستودع، ولا يعني أن أي ميزة قد بُنيت أو اختُبرت فعلياً.
+يجب على المطور الرجوع إلى ملفات SPEC.py الأصلية عند التنفيذ، وإضافة اختبارات مطابقة قبل اعتبار المحرك متوافقاً.

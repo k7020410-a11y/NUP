@@ -1,0 +1,19 @@
+pluginManagement {
+    repositories {
+        maven { url = uri("/root/maven/localMvnRepository") }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        maven { url = uri("/root/maven/localMvnRepository") }
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "nup-manager"
+include(":app")
