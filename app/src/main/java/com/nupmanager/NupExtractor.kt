@@ -2,10 +2,11 @@ package com.nupmanager
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import com.github.luben.zstd.ZstdInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -57,12 +58,8 @@ class NupExtractor(private val context: Context) {
         destinationTreeUri: Uri,
         onProgress: (completedFiles: Int, totalFiles: Int, fileName: String) -> Unit = { _, _, _ -> }
     ): Result {
-        val temporary = File.createTempFile("nup-extract-", ".nup", context.cacheDir)
+        val temporary = spoolSourceToAvailableCache(sourceUri)
         try {
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                temporary.outputStream().buffered().use { output -> input.copyTo(output, 128 * 1024) }
-            } ?: throw NupFormatException("Cannot open the selected NUP file")
-
             val destination = DocumentFile.fromTreeUri(context, destinationTreeUri)
                 ?: throw NupFormatException("Cannot open the selected destination folder")
             if (!destination.isDirectory || !destination.canWrite()) {
@@ -117,6 +114,61 @@ class NupExtractor(private val context: Context) {
         } finally {
             temporary.delete()
         }
+    }
+
+    private fun spoolSourceToAvailableCache(sourceUri: Uri): File {
+        val candidates = listOfNotNull(context.externalCacheDir, context.cacheDir).distinct()
+        candidates.forEach { dir ->
+            dir.listFiles()?.filter { it.name.startsWith("nup-extract-") && it.name.endsWith(".nup") }
+                ?.forEach { it.delete() }
+        }
+        val sourceSize = try {
+            context.contentResolver.query(sourceUri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else -1L
+            } ?: -1L
+        } catch (_: Exception) { -1L }
+
+        var lastNoSpace: IOException? = null
+        for (dir in candidates) {
+            if (!dir.exists() && !dir.mkdirs()) continue
+            val freeBytes = dir.usableSpace
+            if (sourceSize > 0L && freeBytes > 0L && freeBytes < sourceSize) {
+                lastNoSpace = IOException("Not enough free space in ${dir.absolutePath}")
+                continue
+            }
+            val temporary = try { File.createTempFile("nup-extract-", ".nup", dir) }
+                catch (e: IOException) { lastNoSpace = e; continue }
+            try {
+                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                    temporary.outputStream().buffered().use { output -> input.copyTo(output, 128 * 1024) }
+                } ?: throw NupFormatException("Cannot open the selected NUP file")
+                return temporary
+            } catch (e: IOException) {
+                temporary.delete()
+                if (!isNoSpace(e)) throw e
+                lastNoSpace = e
+            } catch (e: Throwable) {
+                temporary.delete()
+                throw e
+            }
+        }
+        if (lastNoSpace != null) {
+            throw NupFormatException(
+                "Not enough free space for the temporary NUP copy. The app tried shared app storage and private cache; " +
+                    "free space there or move the archive to a storage location with more room."
+            )
+        }
+        throw NupFormatException("Cannot create temporary storage for extraction")
+    }
+
+    private fun isNoSpace(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            val message = current.message.orEmpty().lowercase(Locale.ROOT)
+            if (message.contains("enospc") || message.contains("no space left") || message.contains("disk full")) return true
+            current = current.cause
+        }
+        return false
     }
 
     /** Parsed tuple: directories, files, packages, child node ids. */
@@ -312,6 +364,9 @@ class NupExtractor(private val context: Context) {
                         } ?: throw NupFormatException("Cannot write output file: ${entry.name}")
                     } catch (e: Throwable) {
                         output.delete()
+                        if (isNoSpace(e)) {
+                            throw NupFormatException("The selected destination folder has run out of space. Choose a folder on storage with more free space.")
+                        }
                         throw e
                     }
                     onFile(entry, entry.name)
